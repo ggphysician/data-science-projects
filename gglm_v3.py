@@ -4,14 +4,13 @@ import csv
 import datetime
 import re
 import tkinter as tk
+import time
 from tkinter import filedialog
 from rapidfuzz import process, fuzz
 
-#Test Git
-#Test branch
 
 # File name for export
-output_file = '47k_cleaned_python.csv'
+output_file = '47k_cleaned_python_confirm.csv'
 
 conn = sqlite3.connect('47k.sqlite')
 cur = conn.cursor()
@@ -62,7 +61,6 @@ abbreviation_dict = {
     "type 2 diabetes": "Type 2 diabetes mellitus",
     "t1dm": "Type 1 diabetes mellitus",
 
-
 }
 
 # Function to convert dates
@@ -86,8 +84,15 @@ def select_file():
     file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
     return file_path
 
-# Load CSV data-----------------------replace "47_small.cxv" with "select_file()"
-fname = "47_small.csv"
+# Function to remove and clean the " jr" from patient first name
+def clean_commas(line):
+    # Remove misplaced commas before splitting (e.g., "Applegate, Jr." → "Applegate Jr.")
+    line = re.sub(r',\s*(Jr|Sr)\b', r' \1', line)  # Fix misplaced commas before Jr/Sr
+    return line
+    
+
+# Load CSV data-----------------------
+fname = select_file()
 if not fname:
     print("No file selected. Exiting.")
     exit()
@@ -96,7 +101,12 @@ fh = open(fname, encoding='utf-8-sig')
 
 medical_data = {}
 
+#Trying to batch commits
+batch_size = 500
+count = 0
+
 for line in fh:
+    line = clean_commas(line)
     pieces = line.strip().split(',')
     
     if not pieces[0].strip():
@@ -107,6 +117,9 @@ for line in fh:
     patient_key = pieces[4]
     multi_record = pieces[8]
 
+    # looking for bugs in data pieces and sqlite
+    # #print(f"Attempting to insert: {patient_key}, {first_name}, {last_name}")
+
     # Insert into Subject table
     cur.execute('''INSERT OR IGNORE INTO Subject (patient_key, first_name, last_name)
         VALUES (?, ?, ?)''', (patient_key, first_name, last_name))
@@ -114,6 +127,14 @@ for line in fh:
     # Insert into Multi table
     cur.execute('''INSERT OR IGNORE INTO Multi (patient_key_id, multi_record_id)
         VALUES (?, ?)''', (patient_key, multi_record))
+    
+    count += 1
+    if count % batch_size == 0:  #is count a multiple of batch size
+        print(f"Committing {count} records...")
+        conn.commit()
+        time.sleep(.01) #give time for commit
+        print(f"Committed {count} records sucessfully")
+
 
     if multi_record not in medical_data:
         medical_data[multi_record] = {"diagnosis": None, "start": None, "stop": None}
@@ -126,6 +147,8 @@ for line in fh:
         # identify specific values in the diagnosis to replace (CABG anywhere is changed to "Coronary artery bypass")
         if "cabg" in cleaned_diagnosis.lower():
             cleaned_diagnosis = "Coronary artery bypass"
+        if "cardiac stent" in cleaned_diagnosis.lower() and "placement" in cleaned_diagnosis.lower():
+            cleaned_diagnosis = "Corononary arterial stent insertion"
          # Expand abbreviations if found
         else:
             cleaned_diagnosis = abbreviation_dict.get(cleaned_diagnosis.lower(), cleaned_diagnosis)
@@ -154,10 +177,6 @@ crio_diagnoses = [row[0] for row in cur.fetchall()]
 # Fetch all Medical diagnoses - iterating through table in SQlite to fetch all rows and add tuples to medical_entries
 cur.execute("SELECT multi_record, diagnosis FROM Medical")
 medical_entries = cur.fetchall()
-
-for multi_record, diagnosis in medical_entries:
-    if multi_record == "007f7dea-0db6-4ace-b7cd-7cf7956de4b6":
-        print(f"Before fuzzy matching: {diagnosis} and {multi_record}")  # Works here
 
 
 # Apply fuzzy matching to standardize Medical.diagnosis
@@ -195,24 +214,20 @@ INNER JOIN
         writer.writerow(headers) # Writes column headers
         writer.writerows(results) # Write data rows
     
-    print(f"Exported Successfully to {output_file}")
+    print(f"Exported Successfully to {output_file} 💾")
 
-    for row in results:
-        print(row)
 
 except sqlite3.Error as e:
     print(f"An error occurred: {e}")
 except Exception as e:
     print(f"A general error occurred: {e}")
 
-conn.commit()
+print("Final commit for remaining records...")
 conn.close()
+print(f"Final commit for {count} total records.")
+
+#confirm closure of SQL
+print("Database connection closed successfully ✅ ")
 
 
 
-# Check accuracy on small
-# add in additional abbreviations
-
-# 0128e499-4305-4fb8-b5c1-fa2b24ab286	Seasonal allergy
-# 00730ac7-2135-433d-bd0c-d0776de71b3	seasonal allergies
-# 00f0411d-dbba-49d3-9819-2e62d37d0c9	allergies
